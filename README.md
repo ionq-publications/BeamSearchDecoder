@@ -40,11 +40,15 @@ To reproduce the results, follow these 3 steps:
 If you use this code in your research, please cite our paper:
 
 ```bibtex
-@article{ye2025beam,
-      title={Beam search decoder for quantum LDPC codes}, 
-      author={Min Ye and Dave Wecker and Nicolas Delfosse},
-      year={2025},
-      journal={arXiv:2512.07057}
+@article{ye2026beam,
+  title={Beam Search Decoder for Quantum Low-Density Parity-Check Codes},
+  author={Ye, Min and Wecker, Dave and Delfosse, Nicolas},
+  journal={PRX Quantum},
+  volume={7},
+  number={3},
+  pages={033002},
+  year={2026},
+  publisher={APS}
 }
 ```
 
