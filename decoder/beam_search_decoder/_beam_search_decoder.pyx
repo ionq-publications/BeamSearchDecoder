@@ -93,6 +93,16 @@ cdef class BeamSearchDecoderBase:
         num_results=kwargs.get("num_results",1)
         initial_iters=kwargs.get("initial_iters",30)
         iters_per_round=kwargs.get("iters_per_round",20)
+        warm_start_children=kwargs.get("warm_start_children", True)
+        child_restart_alpha=kwargs.get("child_restart_alpha", None)
+        child_restart_local_shells=kwargs.get("child_restart_local_shells", False)
+        child_restart_local_shell_alpha_radius1=kwargs.get("child_restart_local_shell_alpha_radius1", 0.0)
+        child_restart_local_shell_alpha_radius2=kwargs.get("child_restart_local_shell_alpha_radius2", 0.5)
+        child_restart_local_shell_alpha_far=kwargs.get("child_restart_local_shell_alpha_far", 1.0)
+        child_restart_adaptive_near_clamp=kwargs.get("child_restart_adaptive_near_clamp", False)
+        child_restart_adaptive_flip_threshold=kwargs.get("child_restart_adaptive_flip_threshold", 2)
+        child_restart_adaptive_flip_penalty=kwargs.get("child_restart_adaptive_flip_penalty", 0.25)
+        child_restart_adaptive_disagree_penalty=kwargs.get("child_restart_adaptive_disagree_penalty", 0.5)
         channel_probs = kwargs.get("channel_probs", [None])
 
         """
@@ -120,7 +130,7 @@ cdef class BeamSearchDecoderBase:
 
 
         ## initialise the decoder with default values
-        self.bpd = new BeamSearchDecoderCpp(self.pcm[0],self._error_channel,10,8,1,30,20)
+        self.bpd = new BeamSearchDecoderCpp(self.pcm[0],self._error_channel,10,8,1,30,20,True,1.0,False,0.0,0.5,1.0,False,2,0.25,0.5)
 
         ## set the decoder parameters
         self.max_rounds = max_rounds
@@ -128,6 +138,18 @@ cdef class BeamSearchDecoderBase:
         self.num_results = num_results
         self.initial_iters = initial_iters
         self.iters_per_round = iters_per_round
+        if child_restart_alpha is None:
+            self.warm_start_children = warm_start_children
+        else:
+            self.child_restart_alpha = child_restart_alpha
+        self.child_restart_local_shells = child_restart_local_shells
+        self.child_restart_local_shell_alpha_radius1 = child_restart_local_shell_alpha_radius1
+        self.child_restart_local_shell_alpha_radius2 = child_restart_local_shell_alpha_radius2
+        self.child_restart_local_shell_alpha_far = child_restart_local_shell_alpha_far
+        self.child_restart_adaptive_near_clamp = child_restart_adaptive_near_clamp
+        self.child_restart_adaptive_flip_threshold = child_restart_adaptive_flip_threshold
+        self.child_restart_adaptive_flip_penalty = child_restart_adaptive_flip_penalty
+        self.child_restart_adaptive_disagree_penalty = child_restart_adaptive_disagree_penalty
 
         if error_channel is not None:
             self.error_channel = error_channel
@@ -372,6 +394,153 @@ cdef class BeamSearchDecoderBase:
             raise ValueError(f"iters_per_round input parameter must be a positive int. Not {value}.")
         self.bpd.iters_per_round = value
 
+    @property
+    def warm_start_children(self) -> bool:
+        """
+        Returns whether child paths warm-start from the parent bit-to-check messages.
+
+        Returns:
+            bool: True for warm child restarts, False for cold child restarts.
+        """
+        return self.bpd.warm_start_children
+
+    @warm_start_children.setter
+    def warm_start_children(self, value) -> None:
+        """
+        Sets whether child paths warm-start from the parent bit-to-check messages.
+
+        Args:
+            value: Bool-like flag. True enables warm child restarts, False uses cold restarts.
+        """
+        self.bpd.warm_start_children = True if value else False
+        self.bpd.child_restart_alpha = 1.0 if value else 0.0
+
+    @property
+    def child_restart_alpha(self) -> float:
+        """
+        Returns the child restart mix coefficient.
+
+        Returns:
+            float: 1.0 uses the parent messages, 0.0 cold-starts from the channel prior,
+            intermediate values linearly interpolate between the two.
+        """
+        return self.bpd.child_restart_alpha
+
+    @child_restart_alpha.setter
+    def child_restart_alpha(self, value) -> None:
+        """
+        Sets the child restart mix coefficient.
+
+        Args:
+            value: Float in [0, 1]. 1 keeps warm restarts, 0 uses cold restarts.
+        """
+        cdef double alpha
+        alpha = float(value)
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError(f"child_restart_alpha must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_alpha = alpha
+        self.bpd.warm_start_children = True if alpha > 0.0 else False
+
+    @property
+    def child_restart_local_shells(self) -> bool:
+        """
+        Returns whether child restarts use the local Tanner-shell interpolation policy.
+
+        Returns:
+            bool: True when shell-local interpolation is enabled.
+        """
+        return self.bpd.child_restart_local_shells
+
+    @child_restart_local_shells.setter
+    def child_restart_local_shells(self, value) -> None:
+        """
+        Enables or disables shell-local child restart interpolation.
+
+        Args:
+            value: Bool-like flag.
+        """
+        self.bpd.child_restart_local_shells = True if value else False
+
+    @property
+    def child_restart_local_shell_alpha_radius1(self) -> float:
+        return self.bpd.child_restart_local_shell_alpha_radius1
+
+    @child_restart_local_shell_alpha_radius1.setter
+    def child_restart_local_shell_alpha_radius1(self, value) -> None:
+        cdef double alpha
+        alpha = float(value)
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError(f"child_restart_local_shell_alpha_radius1 must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_local_shell_alpha_radius1 = alpha
+
+    @property
+    def child_restart_local_shell_alpha_radius2(self) -> float:
+        return self.bpd.child_restart_local_shell_alpha_radius2
+
+    @child_restart_local_shell_alpha_radius2.setter
+    def child_restart_local_shell_alpha_radius2(self, value) -> None:
+        cdef double alpha
+        alpha = float(value)
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError(f"child_restart_local_shell_alpha_radius2 must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_local_shell_alpha_radius2 = alpha
+
+    @property
+    def child_restart_local_shell_alpha_far(self) -> float:
+        return self.bpd.child_restart_local_shell_alpha_far
+
+    @child_restart_local_shell_alpha_far.setter
+    def child_restart_local_shell_alpha_far(self, value) -> None:
+        cdef double alpha
+        alpha = float(value)
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError(f"child_restart_local_shell_alpha_far must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_local_shell_alpha_far = alpha
+
+    @property
+    def child_restart_adaptive_near_clamp(self) -> bool:
+        return self.bpd.child_restart_adaptive_near_clamp
+
+    @child_restart_adaptive_near_clamp.setter
+    def child_restart_adaptive_near_clamp(self, value) -> None:
+        self.bpd.child_restart_adaptive_near_clamp = True if value else False
+
+    @property
+    def child_restart_adaptive_flip_threshold(self) -> int:
+        return self.bpd.child_restart_adaptive_flip_threshold
+
+    @child_restart_adaptive_flip_threshold.setter
+    def child_restart_adaptive_flip_threshold(self, value) -> None:
+        cdef int threshold
+        threshold = int(value)
+        if threshold < 1:
+            raise ValueError(f"child_restart_adaptive_flip_threshold must be >=1. Not {value}.")
+        self.bpd.child_restart_adaptive_flip_threshold = threshold
+
+    @property
+    def child_restart_adaptive_flip_penalty(self) -> float:
+        return self.bpd.child_restart_adaptive_flip_penalty
+
+    @child_restart_adaptive_flip_penalty.setter
+    def child_restart_adaptive_flip_penalty(self, value) -> None:
+        cdef double penalty
+        penalty = float(value)
+        if penalty < 0.0 or penalty > 1.0:
+            raise ValueError(f"child_restart_adaptive_flip_penalty must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_adaptive_flip_penalty = penalty
+
+    @property
+    def child_restart_adaptive_disagree_penalty(self) -> float:
+        return self.bpd.child_restart_adaptive_disagree_penalty
+
+    @child_restart_adaptive_disagree_penalty.setter
+    def child_restart_adaptive_disagree_penalty(self, value) -> None:
+        cdef double penalty
+        penalty = float(value)
+        if penalty < 0.0 or penalty > 1.0:
+            raise ValueError(f"child_restart_adaptive_disagree_penalty must be in [0,1]. Not {value}.")
+        self.bpd.child_restart_adaptive_disagree_penalty = penalty
+
 
 cdef class BeamSearchDecoder(BeamSearchDecoderBase):
     """
@@ -392,7 +561,17 @@ cdef class BeamSearchDecoder(BeamSearchDecoderBase):
     def __cinit__(self, pcm: Union[np.ndarray, scipy.sparse.spmatrix],
                  error_channel: Optional[Union[np.ndarray,List[float]]] = None, max_rounds: Optional[int] = 10,
                  beam_width: Optional[int] = 8, num_results: Optional[int] = 1, initial_iters: Optional[int] = 30,
-                 iters_per_round: Optional[int] = 20, **kwargs):
+                 iters_per_round: Optional[int] = 20, warm_start_children: Optional[bool] = True,
+                 child_restart_alpha: Optional[float] = None,
+                 child_restart_local_shells: Optional[bool] = False,
+                 child_restart_local_shell_alpha_radius1: Optional[float] = 0.0,
+                 child_restart_local_shell_alpha_radius2: Optional[float] = 0.5,
+                 child_restart_local_shell_alpha_far: Optional[float] = 1.0,
+                 child_restart_adaptive_near_clamp: Optional[bool] = False,
+                 child_restart_adaptive_flip_threshold: Optional[int] = 2,
+                 child_restart_adaptive_flip_penalty: Optional[float] = 0.25,
+                 child_restart_adaptive_disagree_penalty: Optional[float] = 0.5,
+                 **kwargs):
 
         for key in kwargs.keys():
             if key not in ["channel_probs"]:
@@ -403,9 +582,30 @@ cdef class BeamSearchDecoder(BeamSearchDecoderBase):
     def __init__(self, pcm: Union[np.ndarray, scipy.sparse.spmatrix],
                  error_channel: Optional[Union[np.ndarray,List[float]]] = None, max_rounds: Optional[int] = 10,
                  beam_width: Optional[int] = 8, num_results: Optional[int] = 1, initial_iters: Optional[int] = 30,
-                 iters_per_round: Optional[int] = 20, **kwargs):
+                 iters_per_round: Optional[int] = 20, warm_start_children: Optional[bool] = True,
+                 child_restart_alpha: Optional[float] = None,
+                 child_restart_local_shells: Optional[bool] = False,
+                 child_restart_local_shell_alpha_radius1: Optional[float] = 0.0,
+                 child_restart_local_shell_alpha_radius2: Optional[float] = 0.5,
+                 child_restart_local_shell_alpha_far: Optional[float] = 1.0,
+                 child_restart_adaptive_near_clamp: Optional[bool] = False,
+                 child_restart_adaptive_flip_threshold: Optional[int] = 2,
+                 child_restart_adaptive_flip_penalty: Optional[float] = 0.25,
+                 child_restart_adaptive_disagree_penalty: Optional[float] = 0.5,
+                 **kwargs):
 
-        pass
+        if child_restart_alpha is None:
+            self.warm_start_children = warm_start_children
+        else:
+            self.child_restart_alpha = child_restart_alpha
+        self.child_restart_local_shells = child_restart_local_shells
+        self.child_restart_local_shell_alpha_radius1 = child_restart_local_shell_alpha_radius1
+        self.child_restart_local_shell_alpha_radius2 = child_restart_local_shell_alpha_radius2
+        self.child_restart_local_shell_alpha_far = child_restart_local_shell_alpha_far
+        self.child_restart_adaptive_near_clamp = child_restart_adaptive_near_clamp
+        self.child_restart_adaptive_flip_threshold = child_restart_adaptive_flip_threshold
+        self.child_restart_adaptive_flip_penalty = child_restart_adaptive_flip_penalty
+        self.child_restart_adaptive_disagree_penalty = child_restart_adaptive_disagree_penalty
 
     def decode(self, input_vector: np.ndarray) -> np.ndarray:
         """
